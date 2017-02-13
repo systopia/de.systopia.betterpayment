@@ -12,6 +12,7 @@
 | written permission from the original author(s).        |
 +--------------------------------------------------------*/
 
+use Civi\Payment\Exception\PaymentProcessorException;
 
 /**
  *
@@ -30,9 +31,8 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
    * mode of operation: live or test
    *
    * @var object
-   * @static
    */
-  static protected $_mode = null;
+  protected $_mode = null;
 
   /**
    * Constructor
@@ -45,6 +45,9 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
     $this->_mode             = $mode;
     $this->_paymentProcessor = $paymentProcessor;
     $this->_processorName    = ts('Betterpayment');
+    $this->apiKey = $paymentProcessor['user_name'];
+    $this->outKey = $paymentProcessor['signature'];
+    $this->inKey = $paymentProcessor['password'];
   }
 
   /**
@@ -76,7 +79,15 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
     $error = array();
 
     if (empty($this->_paymentProcessor['user_name'])) {
-      $error[] = ts('The "Bill To ID" is not set in the Administer CiviCRM Payment Processor.');
+      $error[] = ts('The "Api Key" is not set in the Administer CiviCRM Payment Processor.');
+    }
+
+    if (empty($this->_paymentProcessor['password'])) {
+      $error[] = ts('The "Incoming Key" is not set in the Administer CiviCRM Payment Processor.');
+    }
+
+    if (empty($this->_paymentProcessor['signature'])) {
+      $error[] = ts('The "Outcoming Key" is not set in the Administer CiviCRM Payment Processor.');
     }
 
     if (!empty($error)) {
@@ -91,59 +102,87 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
     CRM_Core_Error::fatal(ts('This function is not implemented'));
   }
 
-  function getCommonParams() {
+  function getCommonParams($params) {
     $commonParams = array(
       'payment_type' => 'cc',
-      'api_key' => '',
-      'order_id' => '',
-      'amount' => '',
+      'api_key' => $this->apiKey,
+      'order_id' => $params['contributionID'],
+      'amount' => $params['amount'],
       'postback_url' => $this->getNotifyUrl(),
     );
     return $commonParams;
   }
 
-  function getBillingAddress() {
+  function getBillingAddress($params) {
     //   $stateName = CRM_Core_PseudoConstant::stateProvinceAbbreviation($value);
     //   $countryName = CRM_Core_PseudoConstant::countryIsoCode($value);
 
+    $billingLocationID = $params['location_type_id'];
     $billingAddress = array(
-      'address' => '',
-      'city' => '',
-      'postal_code' => '',
-      'country' => '',
-      'first_name' => '',
-      'last_name' => '',
-      'email' => '',
-      'address2' => '',
-      'state' => '',
-      'phone' => '',
+      'address' => $params["billing_street_address-${billingLocationID}"],
+      'city' => $params["billing_city-${billingLocationID}"],
+      'postal_code' => $params["billing_postal_code-${billingLocationID}"],
+      'country' => $params["billing_country-${billingLocationID}"],
+      'first_name' => $params["billing_first_name"],
+      'last_name' => $params["billing_last_name"],
+      'email' => $params["email-${billingLocationID}"],
+      'state' => $params["billing_state_province-${billingLocationID}"],
     );
     return $billingAddress;
   }
 
-  function getRedirectionUrls() {
+  function getRedirectionUrls($params) {
     $redirectionUrls = array(
-      'success_url' => $this->getReturnSuccessUrl(),
-      'error_url' => $this->getReturnFailUrl(),
+      'success_url' => $this->getReturnSuccessUrl($params['qfKey']),
+      'error_url' => $this->getReturnFailUrl($params['qfKey']),
     );
     return $redirectionUrls;
   }
 
-  function getUrlQuery($PaymentParams) {
-    $query = '';
+  function getUrlQuery($PaymentParams, $key = NULL) {
+    $args = array();
     foreach ($PaymentParams as $key => $value) {
       if ($value === NULL) continue;
       $value = urlencode($value);
-      if (strpos(strrev($key), strrev('_url')) === 0) {
-        $value = str_replace('%2F', '/', $value);
-      }
-      $query .= "&{$key}={$value}";
+      $args[] = "{$key}={$value}";
     }
+    $query = implode('&', $args);
+
+    if ($key) {
+      $checksum = sha1($query . $key);
+      $query .= "&checksum=${checksum}";
+    }
+
     return $query;
   }
 
-  function getChecksum($query, $key) {
-    return sha1($query, $key);
+  /**
+   * Get billing fields required for this processor.
+   *
+   * We apply the existing default of returning fields only for payment processor type 1. Processors can override to
+   * alter.
+   *
+   * @param int $billingLocationID
+   *
+   * @return array
+   */
+  public function getBillingAddressFields($billingLocationID = NULL) {
+    if (!$billingLocationID) {
+      // Note that although the billing id is passed around the forms the idea that it would be anything other than
+      // the result of the function below doesn't seem to have eventuated.
+      // So taking this as a param is possibly something to be removed in favour of the standard default.
+      $billingLocationID = CRM_Core_BAO_LocationType::getBilling();
+    }
+    return array(
+      'first_name' => 'billing_first_name',
+      'middle_name' => 'billing_middle_name',
+      'last_name' => 'billing_last_name',
+      'street_address' => "billing_street_address-{$billingLocationID}",
+      'city' => "billing_city-{$billingLocationID}",
+      'country' => "billing_country_id-{$billingLocationID}",
+      'state_province' => "billing_state_province_id-{$billingLocationID}",
+      'postal_code' => "billing_postal_code-{$billingLocationID}",
+    );
   }
 
   /**
@@ -154,19 +193,68 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
    */
   public function doTransferCheckout(&$params, $component = 'contribute') {
 
-    $PaymentParams = $this->getCommonParams();
-    $PaymentParams = array_merge($PaymentParams, $this->getBillingAddress());
-    $PaymentParams = array_merge($PaymentParams, $this->getRedirectionUrls());
+    $PaymentParams = $this->getCommonParams($params);
+    $PaymentParams = array_merge($PaymentParams, $this->getBillingAddress($params));
+    $PaymentParams = array_merge($PaymentParams, $this->getRedirectionUrls($params));
 
     // Allow further manipulation of the arguments via custom hooks ..
     CRM_Utils_Hook::alterPaymentProcessorParams($this, $params, $paypalParams);
 
-    $query = $this->getUrlQuery($PaymentParams);
-    $checksum = $this->getChecksum($query, $this->$outKey);
     $baseUrl = $this->_paymentProcessor['url_site'];
-    $URL = "{$baseUrl}?{$query}&checksum={$checksum}";
+    $url = "$baseUrl/rest/authorize";
+    $result = $this->invokeAPI($url, $PaymentParams);
+    error_log(print_r($result, 1));
 
-    CRM_Utils_System::redirect($URL);
+    CRM_Utils_System::redirect($result['action_data']['url']);
   }
 
+  /**
+   * Hash_call: Function to perform the API call to PayPal using API signature.
+   *
+   * @methodName is name of API  method.
+   * @nvpStr is nvp string.
+   * returns an associative array containing the response from the server.
+   *
+   * @param string $url
+   * @param array $args
+   *
+   * @return array|object
+   * @throws \Exception
+   */
+  public function invokeAPI($url, $args) {
+
+    //setting the curl parameters.
+    $ch = curl_init();
+    curl_setopt($ch, CURLOPT_URL, $url);
+    curl_setopt($ch, CURLOPT_VERBOSE, 0);
+
+    //turning off the server and peer verification(TrustManager Concept).
+    curl_setopt($ch, CURLOPT_SSL_VERIFYPEER, Civi::settings()->get('verifySSL'));
+    curl_setopt($ch, CURLOPT_SSL_VERIFYHOST, Civi::settings()->get('verifySSL') ? 2 : 0);
+
+    curl_setopt($ch, CURLOPT_RETURNTRANSFER, 1);
+    curl_setopt($ch, CURLOPT_POST, 1);
+
+    //setting the nvpreq as POST FIELD to curl
+    $query = $this->getUrlQuery($args, $this->outKey);
+    curl_setopt($ch, CURLOPT_POSTFIELDS, "${query}&checksum=${checksum}");
+
+    //getting response from server
+    $response = curl_exec($ch);
+
+    if (curl_errno($ch)) {
+      throw new PaymentProcessorException(curl_error($ch));
+    } else {
+      curl_close($ch);
+    }
+
+    // decode json-response
+    $result = json_decode($response, true);
+
+    if ($result['error_code'] != 0) {
+      throw new PaymentProcessorException("{$result['error_message']}");
+    }
+
+    return $result;
+  }
 }
