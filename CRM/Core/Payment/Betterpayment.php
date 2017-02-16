@@ -102,14 +102,26 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
     CRM_Core_Error::fatal(ts('This function is not implemented'));
   }
 
+  function getNotifyUrlWithQuery($params) {
+    $queryParams = array(
+      'module' => 'contribute',
+      'contact_id' => $params['contactID'],
+    );
+    $url = $this->getNotifyUrl();
+    $query = $this->getUrlQuery($queryParams);
+    $checksum = sha1($query . $this->inKey);
+    return $url . $query . "&checksum=${checksum}";
+  }
+
   function getCommonParams($params) {
     $commonParams = array(
       'payment_type' => 'cc',
       'api_key' => $this->apiKey,
       'order_id' => $params['contributionID'],
       'amount' => $params['amount'],
-      'postback_url' => $this->getNotifyUrl(),
+      'postback_url' => $this->getNotifyUrlWithQuery($params),
     );
+    // error_log(print_r($commonParams['postback_url'], 1));
     return $commonParams;
   }
 
@@ -134,25 +146,19 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
   function getRedirectionUrls($params) {
     $redirectionUrls = array(
       'success_url' => $this->getReturnSuccessUrl($params['qfKey']),
-      'error_url' => $this->getReturnFailUrl($params['qfKey']),
+      'error_url' => $this->getCancelUrl($params['qfKey'], NULL),
     );
     return $redirectionUrls;
   }
 
-  function getUrlQuery($PaymentParams, $key = NULL) {
+  function getUrlQuery($params) {
     $args = array();
-    foreach ($PaymentParams as $key => $value) {
+    foreach ($params as $key => $value) {
       if ($value === NULL) continue;
       $value = urlencode($value);
       $args[] = "{$key}={$value}";
     }
     $query = implode('&', $args);
-
-    if ($key) {
-      $checksum = sha1($query . $key);
-      $query .= "&checksum=${checksum}";
-    }
-
     return $query;
   }
 
@@ -192,7 +198,6 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
    * @throws Exception
    */
   public function doTransferCheckout(&$params, $component = 'contribute') {
-
     $PaymentParams = $this->getCommonParams($params);
     $PaymentParams = array_merge($PaymentParams, $this->getBillingAddress($params));
     $PaymentParams = array_merge($PaymentParams, $this->getRedirectionUrls($params));
@@ -203,7 +208,7 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
     $baseUrl = $this->_paymentProcessor['url_site'];
     $url = "$baseUrl/rest/authorize";
     $result = $this->invokeAPI($url, $PaymentParams);
-    error_log(print_r($result, 1));
+    // error_log(print_r($result, 1));
 
     CRM_Utils_System::redirect($result['action_data']['url']);
   }
@@ -236,7 +241,8 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
     curl_setopt($ch, CURLOPT_POST, 1);
 
     //setting the nvpreq as POST FIELD to curl
-    $query = $this->getUrlQuery($args, $this->outKey);
+    $query = $this->getUrlQuery($args);
+    $checksum = sha1($query . $this->outKey);
     curl_setopt($ch, CURLOPT_POSTFIELDS, "${query}&checksum=${checksum}");
 
     //getting response from server
@@ -256,5 +262,13 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
     }
 
     return $result;
+  }
+
+  /**
+   * Process incoming notification.
+   */
+  static public function handlePaymentNotification() {
+    $betterpaymentIPN = new CRM_Core_Payment_BetterpaymentIPN();
+    $betterpaymentIPN->main();
   }
 }
