@@ -30,9 +30,22 @@ class CRM_Core_Payment_BetterpaymentIPN extends CRM_Core_Payment_BaseIPN {
 
     // get all parameters
     $params = array_merge($_GET, $_REQUEST);
-    $this->validateParams($params);
     $this->setInputParameters($params);
     parent::__construct();
+  }
+
+  /**
+   * throw an error; use prefix for msg
+   *
+   * @param string log-message
+   * @param bool throw error or only error-log
+   *
+   * @throws CRM_Core_Exception
+   */
+  static function error($msg, $throwError = True) {
+    $msg = 'CRM_Core_Payment_BetterpaymentIPN: ' .  $msg;
+    error_log($msg);
+    if ($throwError) throw new CRM_Core_Exception($msg);
   }
 
   /**
@@ -55,12 +68,10 @@ class CRM_Core_Payment_BetterpaymentIPN extends CRM_Core_Payment_BaseIPN {
       $query = $matches[1];
       $checksum = $matches[2];
     } else {
-      error_log('Checksum of post-query missing!');
-      throw new CRM_Core_Exception("Checksum of post-query missing!");
+      self::error('Checksum of post-query missing!');
     }
     if (sha1($query . $inKey) != $checksum) {
-      error_log('Checksum of post-query is invalid!');
-      throw new CRM_Core_Exception("Checksum of post-query is invalid!");
+      self::error('Checksum of post-query is invalid!');
     }
   }
 
@@ -72,15 +83,103 @@ class CRM_Core_Payment_BetterpaymentIPN extends CRM_Core_Payment_BaseIPN {
    * @throws CRM_Core_Exception
    */
   public function validateParams($params) {
-    $keys = array('order_id', 'transaction_id', 'status_code', 'module');
-    foreach($keys as $key) {
-      if (!isset($params[$key])) {
-        $error_msg = "$key is not set!";
-        error_log($error_msg);
-        throw new CRM_Core_Exception($error_msg);
-      }
+    CRM_Core_Payment_Betterpayment::validateParams($params, array(
+      'order_id',
+      'transaction_id',
+      'status_code',
+      'module',
+      'mode',
+    ));
+    if ($params['module'] == 'event') {
+      CRM_Core_Payment_Betterpayment::validateParams($params, array('participant_id'));
     }
   }
+
+  /**
+   * Update Contribution
+   *
+   * @param array params
+   *
+   * @throws CRM_Core_Exception
+   * @return contribution
+   */
+  public function updateContribution(&$params) {
+    $contribution = civicrm_api3('Contribution', 'getsingle', array('id' => $params['order_id']));
+    if ($contribution['is_error'] == 1) {
+      self::error("Contribution not found: " . json_encode($params));
+    }
+
+    switch ($params['status_code']) {
+      case 3:
+        // completed
+        $status_id = 1; break;
+      case 8:
+        // testapi only gives as status-code 8 (authorized)
+        $status_id = ($params['mode'] == 'test') ? 1 : 2; break;
+      case 1:
+      case 2:
+      case 9:
+        // pending
+        $status_id = 2; break;
+      case 5:
+      case 12:
+        // canceled
+        $status_id = 3; break;
+      case 4:
+      case 6:
+        // error
+        $status_id = 4; break;
+      default:
+        self::error("Unknown status-code: $params[status_code]");
+    }
+
+    $result = civicrm_api3('Contribution', 'create', array(
+      'id' => $params['order_id'],
+      'trxn_id' => $params['transaction_id'],
+      'contribution_status_id' => $status_id
+    ));
+    return reset($result['values']);
+  }
+
+  /**
+   * Update Participant
+   *
+   * @param array params
+   * @param int contribution_status
+   *
+   * @throws CRM_Core_Exception
+   * @return participant|void
+   */
+  public function updateParticipant(&$params, $contribution_status) {
+    $participant = civicrm_api3('Participant', 'getsingle', array('id' => $params['participant_id']));
+    if ($participant['is_error'] == 1) {
+      self::error("Participant not found: " . json_encode($params));
+    }
+
+    switch ($contribution_status) {
+      case 1:
+        // completed
+        $status_id = 1; break;
+      case 2:
+        // pending
+        $status_id = 6; break;
+      case 3:
+        // canceled
+        $status_id = 4; break;
+      case 4:
+        // pending because of error while payment
+        $status_id = 6; break;
+    }
+
+    if ($status_id != $participant['participant_status_id']) {
+      $result = civicrm_api3('Participant', 'create', array(
+        'id' => $params['participant_id'],
+        'participant_status_id' => $status_id
+      ));
+      return reset($result['values']);
+    }
+  }
+
 
   /**
    * Process IPN
@@ -89,20 +188,14 @@ class CRM_Core_Payment_BetterpaymentIPN extends CRM_Core_Payment_BaseIPN {
    */
   public function main() {
     $params = $this->_inputParameters;
-    if ($params['status_code'] == 8) {
-      civicrm_api3('contribution', 'completetransaction', array(
-        'id' => $params['order_id'],
-        'trxn_id' => $params['transaction_id'])
-      );
-    } else {
-      $error_msg = "Could not complete transaction. Status-Code = $params[status_code]";
-      error_log($error_msg);
-      civicrm_api3('contribution', 'create', array(
-        'id' => $params['order_id'],
-        'trxn_id' => $params['transaction_id'],
-        'contribution_status_id' => 4, // failed
-      ));
+    $this->validateParams($params);
+
+    $contribution = $this->updateContribution($params);
+
+    if ($params['module'] == 'event') {
+      $this->updateParticipant($params, $contribution['contribution_status_id']);
     }
+
     return TRUE;
   }
 }

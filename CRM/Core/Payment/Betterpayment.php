@@ -75,17 +75,14 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
    */
   function checkConfig( ) {
     $config = CRM_Core_Config::singleton();
-
     $error = array();
 
     if (empty($this->_paymentProcessor['user_name'])) {
       $error[] = ts('The "Api Key" is not set in the Administer CiviCRM Payment Processor.');
     }
-
     if (empty($this->_paymentProcessor['password'])) {
       $error[] = ts('The "Incoming Key" is not set in the Administer CiviCRM Payment Processor.');
     }
-
     if (empty($this->_paymentProcessor['signature'])) {
       $error[] = ts('The "Outcoming Key" is not set in the Administer CiviCRM Payment Processor.');
     }
@@ -102,17 +99,70 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
     CRM_Core_Error::fatal(ts('This function is not implemented'));
   }
 
+  /**
+   * Param-validation
+   *
+   * @param array params
+   * @param array keys
+   *
+   * @throws CRM_Core_Exception
+   */
+  static function validateParams($params, $keys) {
+    foreach($keys as $key) {
+      if (empty($params[$key])) {
+        self::error("$key is not set!");
+      }
+    }
+  }
+
+  /**
+   * throw an error; use prefix for msg
+   *
+   * @param string log-message
+   * @param bool throw error or only error-log
+   *
+   * @throws CRM_Core_Exception
+   */
+  static function error($msg, $throwError = True) {
+    $msg = 'CRM_Core_Payment_Betterpayment: ' .  $msg;
+    error_log($msg);
+    if ($throwError) throw new CRM_Core_Exception($msg);
+  }
+
+  /**
+   * get NotifyUrl with URL-query
+   *
+   * @param array params
+   *
+   * @throws CRM_Core_Exception
+   * @return string NotifyUrlWithQuery
+   */
   function getNotifyUrlWithQuery($params) {
     $queryParams = array(
-      'module' => 'contribute',
-      'contact_id' => $params['contactID'],
+      'module' => $this->_component,
+      'mode' => $this->_mode,
     );
+    self::validateParams($queryParams, array('module', 'mode'));
+
+    if ($this->_component == 'event') {
+      $queryParams['participant_id'] = $params['participantID'];
+      self::validateParams($queryParams, array('participant_id'));
+    }
+
     $url = $this->getNotifyUrl();
     $query = $this->getUrlQuery($queryParams);
     $checksum = sha1($query . $this->inKey);
     return $url . $query . "&checksum=${checksum}";
   }
 
+  /**
+   * get common parameters (see betterpayment-specifications)
+   *
+   * @param array params
+   *
+   * @throws CRM_Core_Exception
+   * @return array common parameters
+   */
   function getCommonParams($params) {
     $commonParams = array(
       'payment_type' => 'cc',
@@ -121,36 +171,92 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
       'amount' => $params['amount'],
       'postback_url' => $this->getNotifyUrlWithQuery($params),
     );
+    self::validateParams($commonParams, array(
+      'payment_type',
+      'api_key',
+      'order_id',
+      'amount',
+      'postback_url',
+    ));
     // error_log(print_r($commonParams['postback_url'], 1));
     return $commonParams;
   }
 
-  function getBillingAddress($params) {
-    //   $stateName = CRM_Core_PseudoConstant::stateProvinceAbbreviation($value);
-    //   $countryName = CRM_Core_PseudoConstant::countryIsoCode($value);
+  /**
+   * get email-address
+   * depending on the module email-key differs
+   *
+   * @param array params
+   *
+   * @return string email-address
+   */
+  function getEmail($params) {
+    if ($this->_component == 'contribute') {
+      $billingLocationID = CRM_Core_BAO_LocationType::getBilling();
+      return $params["email-${billingLocationID}"];
+    } elseif ($this->_component == 'event') {
+      return $params["email-Primary"];
+    } else {
+      // this is just for case and untested
+      return $params["email"];
+    }
+  }
 
-    $billingLocationID = $params['location_type_id'];
+  /**
+   * get billing address (see betterpayment-specifications)
+   *
+   * @param array params
+   *
+   * @throws CRM_Core_Exception
+   * @return array billing address
+   */
+  function getBillingAddress($params) {
+    $billingLocationID = CRM_Core_BAO_LocationType::getBilling();
     $billingAddress = array(
+      'first_name' => $params["billing_first_name"],
+      'last_name' => $params["billing_last_name"],
+      'email' => $this->getEmail($params),
       'address' => $params["billing_street_address-${billingLocationID}"],
       'city' => $params["billing_city-${billingLocationID}"],
       'postal_code' => $params["billing_postal_code-${billingLocationID}"],
       'country' => $params["billing_country-${billingLocationID}"],
-      'first_name' => $params["billing_first_name"],
-      'last_name' => $params["billing_last_name"],
-      'email' => $params["email-${billingLocationID}"],
       'state' => $params["billing_state_province-${billingLocationID}"],
     );
+    self::validateParams($billingAddress, array(
+      'first_name',
+      'last_name',
+      'email',
+      'address',
+      'postal_code',
+      'country',
+    ));
     return $billingAddress;
   }
 
+  /**
+   * get redirect urls (see betterpayment-specifications)
+   *
+   * @param array params
+   *
+   * @throws CRM_Core_Exception
+   * @return array redirect urls
+   */
   function getRedirectionUrls($params) {
     $redirectionUrls = array(
       'success_url' => $this->getReturnSuccessUrl($params['qfKey']),
       'error_url' => $this->getCancelUrl($params['qfKey'], NULL),
     );
+    self::validateParams($redirectionUrls, array('success_url', 'error_url'));
     return $redirectionUrls;
   }
 
+  /**
+   * get url-query from parameter-array
+   *
+   * @param array params
+   *
+   * @return string query-string
+   */
   function getUrlQuery($params) {
     $args = array();
     foreach ($params as $key => $value) {
@@ -198,19 +304,24 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
    * @throws Exception
    */
   public function doTransferCheckout(&$params, $component = 'contribute') {
+    // error_log(print_r($params, 1));
+    $this->_component = $component;
     $PaymentParams = $this->getCommonParams($params);
     $PaymentParams = array_merge($PaymentParams, $this->getBillingAddress($params));
     $PaymentParams = array_merge($PaymentParams, $this->getRedirectionUrls($params));
 
     // Allow further manipulation of the arguments via custom hooks ..
-    CRM_Utils_Hook::alterPaymentProcessorParams($this, $params, $paypalParams);
+    CRM_Utils_Hook::alterPaymentProcessorParams($this, $params, $PaymentParams);
 
     $baseUrl = $this->_paymentProcessor['url_site'];
     $url = "$baseUrl/rest/authorize";
     $result = $this->invokeAPI($url, $PaymentParams);
-    // error_log(print_r($result, 1));
 
-    CRM_Utils_System::redirect($result['action_data']['url']);
+    if ($result['status_code'] == 1 && $result['client_action'] == 'redirect') {
+      CRM_Utils_System::redirect($result['action_data']['url']);
+    } else {
+      self::error("Api-Response is invalid: " . json_encode($result));
+    }
   }
 
   /**
@@ -258,7 +369,7 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
     $result = json_decode($response, true);
 
     if ($result['error_code'] != 0) {
-      throw new PaymentProcessorException("{$result['error_message']}");
+      self::error("Apicall-error: " . json_encode($result));
     }
 
     return $result;
