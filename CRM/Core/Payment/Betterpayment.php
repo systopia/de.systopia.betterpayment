@@ -164,6 +164,7 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
    * @return array common parameters
    */
   function getCommonParams($params) {
+    // FIXME: order_id unique ?
     $commonParams = array(
       'payment_type' => 'cc',
       'api_key' => $this->apiKey,

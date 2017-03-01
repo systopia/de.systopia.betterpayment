@@ -109,6 +109,7 @@ class CRM_Core_Payment_BetterpaymentIPN extends CRM_Core_Payment_BaseIPN {
       self::error("Contribution not found: " . json_encode($params));
     }
 
+    // FIXME: use in-progress instead of pending
     switch ($params['status_code']) {
       case 3:
         // completed
@@ -152,6 +153,7 @@ class CRM_Core_Payment_BetterpaymentIPN extends CRM_Core_Payment_BaseIPN {
    */
   public function updateParticipant(&$params, $contribution_status) {
     $participant = civicrm_api3('Participant', 'getsingle', array('id' => $params['participant_id']));
+    // FIXME: exception will be thrown
     if ($participant['is_error'] == 1) {
       self::error("Participant not found: " . json_encode($params));
     }
