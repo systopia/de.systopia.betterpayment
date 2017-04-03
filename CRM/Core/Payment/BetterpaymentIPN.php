@@ -12,6 +12,21 @@
 | written permission from the original author(s).        |
 +--------------------------------------------------------*/
 
+// BetterPayment transaction status IDs
+define('BP_TXN_STATUS_STARTED',         1);
+define('BP_TXN_STATUS_PENDING',         2);
+define('BP_TXN_STATUS_COMPLETE',        3);
+define('BP_TXN_STATUS_ERROR',           4);
+define('BP_TXN_STATUS_CANCELLED',       5);
+define('BP_TXN_STATUS_DECLINED',        6);
+define('BP_TXN_STATUS_REFUNDED',        7);
+define('BP_TXN_STATUS_AUTHORISED',      8);
+define('BP_TXN_STATUS_REGISTERED',      9);
+define('BP_TXN_STATUS_DEBTCOLLECTION', 10);
+define('BP_TXN_STATUS_DEBTPAID',       11);
+define('BP_TXN_STATUS_REVERSED',       12);
+define('BP_TXN_STATUS_CHARGEBACK',     13);
+
 
 /**
  *
@@ -109,34 +124,40 @@ class CRM_Core_Payment_BetterpaymentIPN extends CRM_Core_Payment_BaseIPN {
       self::error("Contribution not found: " . json_encode($params));
     }
 
-    // FIXME: use in-progress instead of pending
     switch ($params['status_code']) {
-      case 3:
-        // completed
-        $status_id = 1; break;
-      case 8:
+      case BP_TXN_STATUS_COMPLETE:
+        $status_id = 1; // "completed"
+        break;
+
+      case BP_TXN_STATUS_AUTHORISED:
         // testapi only gives as status-code 8 (authorized)
-        $status_id = ($params['mode'] == 'test') ? 1 : 2; break;
-      case 1:
-      case 2:
-      case 9:
-        // pending
-        $status_id = 2; break;
-      case 5:
-      case 12:
-        // canceled
-        $status_id = 3; break;
-      case 4:
-      case 6:
-        // error
-        $status_id = 4; break;
+        $status_id = ($params['mode'] == 'test') ? 1 : 2;
+        break;
+
+      case BP_TXN_STATUS_STARTED:
+      case BP_TXN_STATUS_PENDING:
+      case BP_TXN_STATUS_REGISTERED:
+        $status_id = 5; // "in progress"
+        break;
+
+      case BP_TXN_STATUS_CANCELLED:
+      case BP_TXN_STATUS_REVERSED:
+        $status_id = 3; // "cancelled"
+        break;
+
+      case BP_TXN_STATUS_ERROR:
+      case BP_TXN_STATUS_DECLINED:
+        $status_id = 4; // "failed"
+        break;
+
       default:
-        self::error("Unknown status-code: $params[status_code]");
+        self::error("Unknown status-code: {$params[status_code]}");
+        return;
     }
 
     $result = civicrm_api3('Contribution', 'create', array(
-      'id' => $params['order_id'],
-      'trxn_id' => $params['transaction_id'],
+      'id'                     => $params['order_id'],
+      'trxn_id'                => $params['transaction_id'],
       'contribution_status_id' => $status_id
     ));
     return reset($result['values']);
@@ -159,24 +180,29 @@ class CRM_Core_Payment_BetterpaymentIPN extends CRM_Core_Payment_BaseIPN {
     }
 
     switch ($contribution_status) {
-      case 1:
-        // completed
-        $status_id = 1; break;
-      case 2:
-        // pending
-        $status_id = 6; break;
-      case 3:
-        // canceled
-        $status_id = 4; break;
-      case 4:
-        // pending because of error while payment
-        $status_id = 6; break;
+      case 1: // "completed"
+        $new_participant_status = 1; // particpant status: "registered"
+        break;
+
+      case 2: // "pending"
+      case 4: // "in progress"
+        $new_participant_status = 6; // particpant status: "pending"
+        break;
+
+      case 3: // "cancelled"
+        $new_participant_status = 4; // particpant status: "cancelled"
+        break;
+
+      default:
+        self::error("Unexpected contriubtion status: {$contribution_status}");
+        return;
+
     }
 
-    if ($status_id != $participant['participant_status_id']) {
+    if ($new_participant_status != $participant['participant_status_id']) {
       $result = civicrm_api3('Participant', 'create', array(
-        'id' => $params['participant_id'],
-        'participant_status_id' => $status_id
+        'id'                    => $params['participant_id'],
+        'participant_status_id' => $new_participant_status
       ));
       return reset($result['values']);
     }
