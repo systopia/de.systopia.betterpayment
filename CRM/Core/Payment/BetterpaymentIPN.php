@@ -201,7 +201,7 @@ class CRM_Core_Payment_BetterpaymentIPN extends CRM_Core_Payment_BaseIPN {
         break;
 
       default:
-        self::error("Unexpected contriubtion status: {$contribution_status}");
+        self::error("Unexpected contribution status: {$contribution_status}");
         return;
 
     }
