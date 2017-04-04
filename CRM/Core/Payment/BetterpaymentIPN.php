@@ -119,31 +119,40 @@ class CRM_Core_Payment_BetterpaymentIPN extends CRM_Core_Payment_BaseIPN {
    * @return contribution
    */
   public function updateContribution(&$params) {
-    $contribution = civicrm_api3('Contribution', 'getsingle', array('id' => $params['order_id']));
-    if ($contribution['is_error'] == 1) {
-      self::error("Contribution not found: " . json_encode($params));
+    // first find/load the contribution
+    $contribution_id = CRM_Core_Payment_Betterpayment::getContributionID($params['order_id']);
+    if (empty($contribution_id)) {
+      self::error("Bad order number: " . json_encode($params));
+      return;
     }
 
+    $contribution = civicrm_api3('Contribution', 'getsingle', array('id' => $contribution_id));
+    if ($contribution['is_error'] == 1) {
+      self::error("Contribution not found: " . json_encode($params));
+      return;
+    }
+
+    // process status update
     switch ($params['status_code']) {
       case BP_TXN_STATUS_COMPLETE:
       case BP_TXN_STATUS_AUTHORISED:
-        $status_id = 1; // "completed"
+        $new_contribution_status = 1; // "completed"
         break;
 
       case BP_TXN_STATUS_STARTED:
       case BP_TXN_STATUS_PENDING:
       case BP_TXN_STATUS_REGISTERED:
-        $status_id = 5; // "in progress"
+        $new_contribution_status = 5; // "in progress"
         break;
 
       case BP_TXN_STATUS_CANCELLED:
       case BP_TXN_STATUS_REVERSED:
-        $status_id = 3; // "cancelled"
+        $new_contribution_status = 3; // "cancelled"
         break;
 
       case BP_TXN_STATUS_ERROR:
       case BP_TXN_STATUS_DECLINED:
-        $status_id = 4; // "failed"
+        $new_contribution_status = 4; // "failed"
         break;
 
       default:
@@ -151,10 +160,11 @@ class CRM_Core_Payment_BetterpaymentIPN extends CRM_Core_Payment_BaseIPN {
         return;
     }
 
+    // store status update
     $result = civicrm_api3('Contribution', 'create', array(
-      'id'                     => $params['order_id'],
+      'id'                     => $contribution_id,
       'trxn_id'                => $params['transaction_id'],
-      'contribution_status_id' => $status_id
+      'contribution_status_id' => $new_contribution_status
     ));
     return reset($result['values']);
   }
@@ -173,6 +183,7 @@ class CRM_Core_Payment_BetterpaymentIPN extends CRM_Core_Payment_BaseIPN {
     // FIXME: exception will be thrown
     if ($participant['is_error'] == 1) {
       self::error("Participant not found: " . json_encode($params));
+      return;
     }
 
     switch ($contribution_status) {
@@ -212,6 +223,7 @@ class CRM_Core_Payment_BetterpaymentIPN extends CRM_Core_Payment_BaseIPN {
    */
   public function main() {
     $params = $this->_inputParameters;
+    // error_log("Received IPN: " . json_encode($params));
     $this->validateParams($params);
 
     $contribution = $this->updateContribution($params);

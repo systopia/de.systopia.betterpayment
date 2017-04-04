@@ -164,12 +164,11 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
    * @return array common parameters
    */
   function getCommonParams($params) {
-    // FIXME: order_id unique ?
     $commonParams = array(
       'payment_type' => 'cc',
-      'api_key' => $this->apiKey,
-      'order_id' => $params['contributionID'],
-      'amount' => $params['amount'],
+      'api_key'      => $this->apiKey,
+      'order_id'     => self::generateOrderID($params['contributionID']),
+      'amount'       => $params['amount'],
       'postback_url' => $this->getNotifyUrlWithQuery($params),
     );
     self::validateParams($commonParams, array(
@@ -382,5 +381,29 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
   static public function handlePaymentNotification() {
     $betterpaymentIPN = new CRM_Core_Payment_BetterpaymentIPN();
     $betterpaymentIPN->main();
+  }
+
+  /**
+   * Generate a uniqe Order ID for the given contribution ID
+   *
+   * format is CXXXX-YYYY with:  XXXX the first 4 characters of the CIVICRM_SITE_KEY
+   *                             YYYY the contribution ID
+   */
+  public static function generateOrderID($contributionID) {
+    return 'C' . substr(CIVICRM_SITE_KEY, 0, 4) . '-' . $contributionID;
+  }
+
+  /**
+   * Derive the the contribution ID from the given orderID
+   *
+   * @see CRM_Core_Payment_Betterpayment::generateOrderID
+   */
+  public static function getContributionID($order_id) {
+    // first verify prefix
+    if (substr($order_id, 1, 4) != substr(CIVICRM_SITE_KEY, 0, 4)) {
+      throw new Exception("Illegal order number: '{$order_id}'", 1);
+    }
+
+    return (int) substr($order_id, 6);
   }
 }
