@@ -126,12 +126,8 @@ class CRM_Core_Payment_BetterpaymentIPN extends CRM_Core_Payment_BaseIPN {
 
     switch ($params['status_code']) {
       case BP_TXN_STATUS_COMPLETE:
-        $status_id = 1; // "completed"
-        break;
-
       case BP_TXN_STATUS_AUTHORISED:
-        // testapi only gives as status-code 8 (authorized)
-        $status_id = ($params['mode'] == 'test') ? 1 : 2;
+        $status_id = 1; // "completed"
         break;
 
       case BP_TXN_STATUS_STARTED:
