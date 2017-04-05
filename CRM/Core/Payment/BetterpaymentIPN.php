@@ -37,10 +37,17 @@ class CRM_Core_Payment_BetterpaymentIPN extends CRM_Core_Payment_BaseIPN {
    * Constructor function.
    */
   public function __construct() {
-    // we need the raw-query-strings for validation
+    // verify the raw POST string
     $rawPostQuery = file_get_contents("php://input");
-    $rawGetQuery = $_SERVER['QUERY_STRING'];
     $this->validateQuery($rawPostQuery);
+
+
+    // verify the raw GET_QUERY string
+    $rawGetQuery = $_SERVER['QUERY_STRING'];
+
+    // sometimes, the path is part of the string, but NOT the validation
+    //  the following statement makes sure the that is truncated
+    $rawGetQuery = array_pop(preg_split('#civicrm/payment/ipn/\\d+[?&]#', $rawGetQuery));
     $this->validateQuery($rawGetQuery);
 
     // get all parameters
