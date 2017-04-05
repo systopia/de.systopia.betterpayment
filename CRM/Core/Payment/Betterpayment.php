@@ -152,7 +152,11 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
     $url = $this->getNotifyUrl();
     $query = $this->getUrlQuery($queryParams);
     $checksum = sha1($query . $this->inKey);
-    return $url . $query . "&checksum=${checksum}";
+    $postback_url = $url . $query . "&checksum=${checksum}";
+
+    // workaround for CRM-19570
+    $postback_url = str_replace('wp-admin/admin.php', '', $postback_url);
+    return $postback_url;
   }
 
   /**
