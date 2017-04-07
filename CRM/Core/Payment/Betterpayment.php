@@ -130,6 +130,14 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
   }
 
   /**
+   * Will make sure the generated URLs are valid,
+   * e.g. will fix WP URLs that are affected by CRM-19570
+   */
+  public static function prepareURL($url) {
+    return str_replace('wp-admin/admin.php', '', $url);
+  }
+
+  /**
    * get NotifyUrl with URL-query
    *
    * @param array params
@@ -152,11 +160,7 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
     $url = $this->getNotifyUrl();
     $query = $this->getUrlQuery($queryParams);
     $checksum = sha1($query . $this->inKey);
-    $postback_url = $url . $query . "&checksum=${checksum}";
-
-    // workaround for CRM-19570
-    $postback_url = str_replace('wp-admin/admin.php', '', $postback_url);
-    return $postback_url;
+    return self::prepareURL($url . $query . "&checksum=${checksum}");
   }
 
   /**
@@ -247,8 +251,8 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
    */
   function getRedirectionUrls($params) {
     $redirectionUrls = array(
-      'success_url' => $this->getReturnSuccessUrl($params['qfKey']),
-      'error_url' => $this->getCancelUrl($params['qfKey'], NULL),
+      'success_url' => self::prepareURL($this->getReturnSuccessUrl($params['qfKey'])),
+      'error_url'   => self::prepareURL($this->getCancelUrl($params['qfKey'], NULL)),
     );
     self::validateParams($redirectionUrls, array('success_url', 'error_url'));
     return $redirectionUrls;
