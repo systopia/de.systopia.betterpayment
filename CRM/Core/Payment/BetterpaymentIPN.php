@@ -123,7 +123,7 @@ class CRM_Core_Payment_BetterpaymentIPN extends CRM_Core_Payment_BaseIPN {
    * @param array params
    *
    * @throws CRM_Core_Exception
-   * @return contribution
+   * @return new contribution status
    */
   public function updateContribution(&$params) {
     // first find/load the contribution
@@ -173,7 +173,7 @@ class CRM_Core_Payment_BetterpaymentIPN extends CRM_Core_Payment_BaseIPN {
       'trxn_id'                => $params['transaction_id'],
       'contribution_status_id' => $new_contribution_status
     ));
-    return reset($result['values']);
+    return $new_contribution_status;
   }
 
   /**
@@ -233,10 +233,10 @@ class CRM_Core_Payment_BetterpaymentIPN extends CRM_Core_Payment_BaseIPN {
     // error_log("Received IPN: " . json_encode($params));
     $this->validateParams($params);
 
-    $contribution = $this->updateContribution($params);
+    $new_contribution_status = $this->updateContribution($params);
 
     if ($params['module'] == 'event') {
-      $this->updateParticipant($params, $contribution['contribution_status_id']);
+      $this->updateParticipant($params, $new_contribution_status);
     }
 
     return TRUE;

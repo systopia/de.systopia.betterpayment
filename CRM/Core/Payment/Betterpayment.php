@@ -34,6 +34,10 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
    */
   protected $_mode = null;
 
+  /** status info */
+  protected $_participant_id = NULL;
+  protected $_event_id = NULL;
+
   /**
    * Constructor
    *
@@ -45,9 +49,9 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
     $this->_mode             = $mode;
     $this->_paymentProcessor = $paymentProcessor;
     $this->_processorName    = ts('Betterpayment');
-    $this->apiKey = $paymentProcessor['user_name'];
-    $this->outKey = $paymentProcessor['signature'];
-    $this->inKey = $paymentProcessor['password'];
+    $this->apiKey            = $paymentProcessor['user_name'];
+    $this->outKey            = $paymentProcessor['signature'];
+    $this->inKey             = $paymentProcessor['password'];
   }
 
   /**
@@ -252,10 +256,21 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
   function getRedirectionUrls($params) {
     $redirectionUrls = array(
       'success_url' => self::prepareURL($this->getReturnSuccessUrl($params['qfKey'])),
-      'error_url'   => self::prepareURL($this->getCancelUrl($params['qfKey'], NULL)),
+      'error_url'   => self::prepareURL($this->getCancelUrl($params['qfKey'], $this->_participant_id)),
     );
     self::validateParams($redirectionUrls, array('success_url', 'error_url'));
     return $redirectionUrls;
+  }
+
+  /**
+   * overwrite CRM_Core_Payment function because it seems to be missing the event id
+   */
+  public function getCancelUrl($qfKey, $participantID) {
+    $cancelURL = parent::getCancelUrl($qfKey, $participantID);
+    if ($this->_event_id) {
+      $cancelURL .= "&id=" . $this->_event_id;
+    }
+    return $cancelURL;
   }
 
   /**
@@ -312,8 +327,10 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
    * @throws Exception
    */
   public function doTransferCheckout(&$params, $component = 'contribute') {
-    // error_log(print_r($params, 1));
+    // CRM_Core_Error::debug_log_message("doTransferCheckout:params " . json_encode($params));
     $this->_component = $component;
+    $this->_participant_id = CRM_Utils_Array::value('participantID', $params);
+    $this->_event_id = CRM_Utils_Array::value('eventID', $params);
     $PaymentParams = $this->getCommonParams($params);
     $PaymentParams = array_merge($PaymentParams, $this->getBillingAddress($params));
     $PaymentParams = array_merge($PaymentParams, $this->getRedirectionUrls($params));
