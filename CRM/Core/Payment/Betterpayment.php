@@ -339,7 +339,7 @@ class CRM_Core_Payment_Betterpayment extends CRM_Core_Payment {
     CRM_Utils_Hook::alterPaymentProcessorParams($this, $params, $PaymentParams);
 
     $baseUrl = $this->_paymentProcessor['url_site'];
-    $url = "$baseUrl/rest/authorize";
+    $url = "$baseUrl/rest/payment";
     $result = $this->invokeAPI($url, $PaymentParams);
 
     if ($result['status_code'] == 1 && $result['client_action'] == 'redirect') {
